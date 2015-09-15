@@ -178,10 +178,30 @@ func (t Tournament) Ranks() []float64 {
 				break
 			}
 		}
+
 		if ranks != nil {
+			min := 1e100
+			max := 0.0
+			for i := range ranks {
+				col := t.Matrix().Col(nil, i)
+				row := t.Matrix().Row(nil, i)
+				tot := 0.0
+				for j := range col {
+					tot += col[j] + row[j]
+				}
+				ranks[i] = ranks[i] * sense / tot // normalize to # games
+				min = math.Min(ranks[i], min)
+				max = math.Max(ranks[i], max)
+			}
+
+			// uncomment this to make min score = 0 and max score = 1
+			//for i := range ranks {
+			//	ranks[i] = (ranks[i] - min) / (max - min)
+			//}
 			break
 		}
 	}
+
 	return ranks
 }
 
@@ -205,9 +225,12 @@ func (t Tournament) Graph(w io.Writer) {
 	bound := max - min
 
 	for i, player := range players {
-		width := .4 + 2*(ranks[i]-min)/bound
-		height := .25 + 1.3*(ranks[i]-min)/bound
-		fmt.Fprintf(w, "\"%v\" [width=%.2f, height=%.2f, label=\"%v\"];\n", player, width, height, fmt.Sprintf("%v\n(%.2v)", player, ranks[i]))
+		width := .5 + 2*(ranks[i]-min)/bound
+		height := .5 + 1.3*(ranks[i]-min)/bound
+		red := uint8((ranks[i] - min) / bound * 255)
+		green := 255 - red
+		blue := green
+		fmt.Fprintf(w, "\"%v\" [width=%.2f, height=%.2f, label=\"%v\", style=filled, fillcolor=\"#FF%02x%02x\"];\n", player, width, height, fmt.Sprintf("%v\\n(%.2v)", player, ranks[i]), green, blue)
 	}
 
 	r, c := m.Dims()
