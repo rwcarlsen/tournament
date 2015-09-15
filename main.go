@@ -8,14 +8,17 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"os"
-	"strconv"
 	"strings"
 
 	"github.com/gonum/matrix/mat64"
 )
 
 var graph = flag.Bool("graph", false, "print the graphviz dot script of match relationships")
+var matrix = flag.Bool("matrix", false, "print the tournament matrix")
+var eigvect = flag.Bool("eigvect", false, "print the tournament eigenvectors")
+var eigval = flag.Bool("eigval", false, "print the tournament eigenvalues")
 var demo = flag.Bool("demo", false, "just use demo tournament matches")
 
 func main() {
@@ -49,24 +52,34 @@ func main() {
 		tourn = Tournament(matches)
 	}
 
-	m := tourn.Matrix()
-
 	if *graph {
-		Graph(os.Stdout, m, tourn.Players())
+		tourn.Graph(os.Stdout)
+		return
+	} else if *matrix {
+		prefix := "tournmat = "
+		fmt.Printf("%v%v\n", prefix, mat64.Formatted(tourn.Matrix(), mat64.Prefix(strings.Repeat(" ", len(prefix)))))
+		return
+	} else if *eigvect {
+		eig := mat64.Eigen(tourn.Matrix(), 1e-10)
+		prefix := "eigvects = "
+		fmt.Printf("%v%.4v\n", prefix, mat64.Formatted(eig.V, mat64.Prefix(strings.Repeat(" ", len(prefix)))))
+		return
+	} else if *eigval {
+		eig := mat64.Eigen(tourn.Matrix(), 1e-10)
+		prefix := "eigvals = "
+		fmt.Printf("%v%.4v\n", prefix, mat64.Formatted(eig.D(), mat64.Prefix(strings.Repeat(" ", len(prefix)))))
 		return
 	}
 
-	prefix := "tournmat = "
-	fmt.Printf("%v%v\n", prefix, mat64.Formatted(m, mat64.Prefix(strings.Repeat(" ", len(prefix)))))
+	ranks := tourn.Ranks()
+	if ranks == nil {
+		log.Fatalf("no valid eigenvector ranking found")
+	}
 
-	fmt.Println()
-	eig := mat64.Eigen(m, 1e-10)
-	prefix = "eigvects = "
-	fmt.Printf("%v%.4v\n", prefix, mat64.Formatted(eig.V, mat64.Prefix(strings.Repeat(" ", len(prefix)))))
-
-	fmt.Println()
-	prefix = "eigvals = "
-	fmt.Printf("%v%.4v\n", prefix, mat64.Formatted(eig.D(), mat64.Prefix(strings.Repeat(" ", len(prefix)))))
+	players := tourn.Players()
+	for i, rank := range ranks {
+		fmt.Printf("%v\t%.2v\n", players[i], rank)
+	}
 
 }
 
@@ -103,29 +116,6 @@ func ParseMatches(r io.Reader) ([]Match, error) {
 	return matches, s.Err()
 }
 
-func Graph(w io.Writer, m *mat64.Dense, players map[int]string) {
-	fmt.Fprintf(w, "digraph matches {\n")
-	r, c := m.Dims()
-	for i := 0; i < r; i++ {
-		for j := 0; j < c; j++ {
-			if v := m.At(i, j); v > 0 {
-				winner, ok := players[i]
-				if !ok {
-					winner = strconv.Itoa(i)
-				}
-				loser, ok := players[j]
-				if !ok {
-					loser = strconv.Itoa(j)
-				}
-				for n := 0; n < int(v); n++ {
-					fmt.Fprintf(w, "\"%v\" -> \"%v\";\n", winner, loser)
-				}
-			}
-		}
-	}
-	fmt.Fprintf(w, "}\n")
-}
-
 type Match struct {
 	Winner string
 	Loser  string
@@ -149,9 +139,9 @@ func (t Tournament) Ids() map[string]int {
 	return ids
 }
 
-func (t Tournament) Players() map[int]string {
+func (t Tournament) Players() []string {
 	ids := t.Ids()
-	players := map[int]string{}
+	players := make([]string, len(ids))
 	for player, id := range ids {
 		players[id] = player
 	}
@@ -169,4 +159,69 @@ func (t Tournament) Matrix() *mat64.Dense {
 		m.Set(r, c, m.At(r, c)+1)
 	}
 	return m
+}
+
+func (t Tournament) Ranks() []float64 {
+	m := t.Matrix()
+	eig := mat64.Eigen(m, 1e-10)
+	_, c := eig.V.Dims()
+	var ranks []float64
+	for i := 0; i < c; i++ {
+		ranks = eig.V.Col(nil, i)
+		sense := math.Copysign(1, ranks[0])
+		for _, val := range ranks {
+			if sense == 0 {
+				sense = math.Copysign(1, val)
+			}
+			if val*sense < 0 {
+				ranks = nil
+				break
+			}
+		}
+		if ranks != nil {
+			break
+		}
+	}
+	return ranks
+}
+
+func (t Tournament) Graph(w io.Writer) {
+	players := t.Players()
+	m := t.Matrix()
+	ranks := t.Ranks()
+
+	fmt.Fprintf(w, "digraph matches {\n")
+
+	min := ranks[0]
+	max := ranks[0]
+	for _, v := range ranks[1:] {
+		if v < min {
+			min = v
+		}
+		if v > max {
+			max = v
+		}
+	}
+	bound := max - min
+
+	for i, player := range players {
+		width := .4 + 2*(ranks[i]-min)/bound
+		height := .25 + 1.3*(ranks[i]-min)/bound
+		fmt.Fprintf(w, "\"%v\" [width=%.2f, height=%.2f, label=\"%v\"];\n", player, width, height, fmt.Sprintf("%v\n(%.2v)", player, ranks[i]))
+	}
+
+	r, c := m.Dims()
+	for i := 0; i < r; i++ {
+		for j := 0; j < c; j++ {
+			if v := m.At(i, j); v > 0 {
+				winner := players[i]
+				loser := players[j]
+
+				for n := 0; n < int(v); n++ {
+					fmt.Fprintf(w, "\"%v\" -> \"%v\";\n", loser, winner)
+				}
+			}
+		}
+	}
+	fmt.Fprintf(w, "}\n")
 }
