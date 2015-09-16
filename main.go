@@ -89,8 +89,10 @@ func ParseMatches(r io.Reader) ([]Match, error) {
 		i := bytes.IndexAny(data, "\n \t\r")
 		if len(data) == 0 {
 			return 0, nil, nil
-		} else if i == -1 {
-			return len(data), data, nil
+		} else if i == -1 && !atEOF {
+			return 0, nil, nil
+		} else if i == -1 && atEOF {
+			return len(data), bytes.TrimSpace(data), nil
 		}
 
 		token = bytes.TrimSpace(data[:i])
